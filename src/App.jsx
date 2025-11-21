@@ -31,7 +31,7 @@ export default function App() {
 
   // Connect to backend socket.io
   useEffect(() => {
-    const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+    const BACKEND_URL = "https://scribble-backend-7gpq.onrender.com";
     const s = io(BACKEND_URL, { transports: ["websocket"] });
 
     s.on("connect", () => {
