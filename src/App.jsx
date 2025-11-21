@@ -32,8 +32,7 @@ export default function App() {
   // Connect to backend socket.io
   useEffect(() => {
     const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
-const s = io(BACKEND_URL, { transports: ["websocket"] });
-    socketRef.current = s;
+    const s = io(BACKEND_URL, { transports: ["websocket"] });
 
     s.on("connect", () => {
       console.log("✅ Connected to server");
