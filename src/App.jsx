@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import "./index.css"; // Make sure this import is here!
+import "./index.css";
 
 export default function App() {
   const socketRef = useRef(null);
@@ -31,13 +31,25 @@ export default function App() {
 
   // Connect to backend socket.io
   useEffect(() => {
-    const BACKEND_URL = "https://scribble-backend-7gpq.onrender.com";
-    const s = io(BACKEND_URL, { transports: ["websocket"] });
+    // CRITICAL FIX: Use environment variable OR fallback
+    const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+    
+    console.log("🔌 Connecting to backend:", BACKEND_URL);
+    
+    const s = io(BACKEND_URL, { 
+      transports: ["websocket", "polling"], // FIXED: Support both transports
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 10
+    });
+    
+    socketRef.current = s; // CRITICAL FIX: Set socketRef IMMEDIATELY
 
     s.on("connect", () => {
       console.log("✅ Connected to server");
       setConnected(true);
       if (hasName && username) {
+        console.log("📤 Sending join event for:", username);
         s.emit("join", username);
       }
     });
@@ -45,43 +57,73 @@ export default function App() {
     s.on("disconnect", () => {
       console.log("❌ Disconnected from server");
       setConnected(false);
+      setIsDrawer(false);
+      setCurrentWord("");
+      setCurrentDrawerName("");
+    });
+
+    s.on("connect_error", (error) => {
+      console.error("❌ Connection error:", error);
+      setConnected(false);
     });
 
     s.on("chatMessage", (payload) => {
+      console.log("💬 Received chat message:", payload);
       setChat((c) => [...c, { from: payload.from, text: payload.text }]);
     });
 
     s.on("scoreUpdate", (payload) => {
+      console.log("🏆 Received score update:", payload);
       if (payload && payload.scores) setScores(payload.scores);
     });
 
     s.on("userList", (payload) => {
+      console.log("👥 Received user list:", payload);
       if (Array.isArray(payload)) setUsers(payload);
     });
 
     s.on("gameState", (payload) => {
+      console.log("🎮 Received game state:", payload);
       if (payload.currentDrawer) {
         setCurrentDrawerName(payload.currentDrawer);
-        setIsDrawer(payload.currentDrawer === username);
+        const amIDrawer = payload.currentDrawer === username;
+        setIsDrawer(amIDrawer);
+        console.log("   Am I drawer?", amIDrawer);
+      } else {
+        setCurrentDrawerName("");
+        setIsDrawer(false);
       }
     });
 
     s.on("yourWord", (payload) => {
+      console.log("🎨 Received word to draw:", payload.word);
       setCurrentWord(payload.word);
       setIsDrawer(true);
     });
 
     s.on("remoteStroke", (stroke) => {
-      drawStrokeOnCanvas(stroke, false);
+      console.log("🖊️  Received remote stroke");
+      drawStrokeOnCanvas(stroke);
     });
 
     s.on("clearBoard", () => {
+      console.log("🗑️  Received clear board command");
       clearCanvasLocal();
     });
 
     return () => {
+      console.log("🔌 Disconnecting socket...");
       s.disconnect();
     };
+  }, []); // CRITICAL FIX: Empty dependency array - only connect once
+
+  // CRITICAL FIX: Separate effect to handle username changes
+  useEffect(() => {
+    const s = socketRef.current;
+    if (s && s.connected && hasName && username) {
+      console.log("📤 Sending join event for:", username);
+      s.emit("join", username);
+    }
   }, [hasName, username]);
 
   // Canvas setup & high-DPI handling
@@ -114,6 +156,14 @@ export default function App() {
     window.addEventListener("resize", resizeCanvas);
     return () => window.removeEventListener("resize", resizeCanvas);
   }, []);
+
+  // Auto-scroll chat to bottom
+  const chatBoxRef = useRef(null);
+  useEffect(() => {
+    if (chatBoxRef.current) {
+      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+    }
+  }, [chat]);
 
   // Draw helper
   const drawStrokeOnCanvas = (stroke) => {
@@ -153,7 +203,11 @@ export default function App() {
   // Send stroke to server
   const sendStrokeToServer = (stroke) => {
     const s = socketRef.current;
-    if (!s || !s.connected) return;
+    if (!s || !s.connected) {
+      console.warn("⚠️  Cannot send stroke - not connected");
+      return;
+    }
+    console.log("📤 Sending stroke to server");
     s.emit("stroke", stroke);
   };
 
@@ -170,7 +224,10 @@ export default function App() {
 
   // Pointer event handlers
   const handlePointerDown = (e) => {
-    if (!isDrawer) return; // Only drawer can draw
+    if (!isDrawer) {
+      console.log("⚠️  Not drawer - cannot draw");
+      return;
+    }
     
     e.preventDefault();
     let clientX, clientY;
@@ -220,7 +277,7 @@ export default function App() {
   };
 
   const handlePointerUp = (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     drawingRef.current = false;
     lastPointRef.current = null;
   };
@@ -235,10 +292,11 @@ export default function App() {
     }
     const s = socketRef.current;
     if (!s || !s.connected) {
-      setChat((c) => [...c, { from: username, text: msg }]);
-      setMsg("");
+      console.warn("⚠️  Cannot send message - not connected");
+      alert("Not connected to server!");
       return;
     }
+    console.log("📤 Sending guess:", msg);
     s.emit("guess", { from: username, text: msg });
     setMsg("");
   };
@@ -254,12 +312,15 @@ export default function App() {
   const confirmName = (e) => {
     e?.preventDefault();
     const name = nameInput.trim();
-    if (!name) return;
+    if (!name) {
+      alert("Please enter a username");
+      return;
+    }
+    console.log("Setting username:", name);
     setUsername(name);
     localStorage.setItem("scribble_username", name);
     setHasName(true);
-    const s = socketRef.current;
-    if (s && s.connected) s.emit("join", name);
+    // The useEffect will handle sending the join event
   };
 
   const handleNameKeyPress = (e) => {
@@ -271,10 +332,16 @@ export default function App() {
 
   // Clear board
   const clearBoard = () => {
-    if (!isDrawer) return;
+    if (!isDrawer) {
+      console.warn("⚠️  Not drawer - cannot clear");
+      return;
+    }
     const s = socketRef.current;
     clearCanvasLocal();
-    if (s && s.connected) s.emit("clear");
+    if (s && s.connected) {
+      console.log("📤 Sending clear command");
+      s.emit("clear");
+    }
   };
 
   // Toggle dark mode
@@ -297,7 +364,7 @@ export default function App() {
           <div style={{ fontWeight: 700 }}>You:</div>
           <div style={{ flex: 1 }}>{hasName ? username : "Not set"}</div>
           <button className="button" onClick={() => setDarkMode((s) => !s)}>
-            {darkMode ? "Light" : "Dark"}
+            {darkMode ? "☀️" : "🌙"}
           </button>
         </div>
 
@@ -351,7 +418,7 @@ export default function App() {
 
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>Chat</div>
-          <div className="chat-box">
+          <div className="chat-box" ref={chatBoxRef}>
             {chat.map((c, i) => (
               <div key={i} className="chat-message">
                 <strong>{c.from}:</strong> {c.text}
@@ -366,9 +433,13 @@ export default function App() {
               value={msg} 
               onChange={(e) => setMsg(e.target.value)} 
               onKeyPress={handleChatKeyPress}
-              disabled={!hasName} 
+              disabled={!hasName || !connected} 
             />
-            <button className="button" onClick={sendChat} disabled={!hasName}>
+            <button 
+              className="button" 
+              onClick={sendChat} 
+              disabled={!hasName || !connected}
+            >
               Send
             </button>
           </div>
@@ -402,7 +473,7 @@ export default function App() {
                 opacity: isDrawer ? 1 : 0.5
               }}
             >
-              Pen
+              ✏️ Pen
             </button>
             <button 
               className="button" 
@@ -413,7 +484,7 @@ export default function App() {
                 opacity: isDrawer ? 1 : 0.5
               }}
             >
-              Eraser
+              🧹 Eraser
             </button>
           </div>
 
@@ -444,7 +515,7 @@ export default function App() {
               disabled={!isDrawer}
               style={{ opacity: isDrawer ? 1 : 0.5 }}
             >
-              Clear
+              🗑️ Clear
             </button>
             <button 
               className="button" 
@@ -458,7 +529,7 @@ export default function App() {
                 a.click();
               }}
             >
-              Export
+              💾 Export
             </button>
           </div>
         </div>
