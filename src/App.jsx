@@ -7,9 +7,9 @@ export default function App() {
 
   // UI / game state
   const [connected, setConnected] = useState(false);
-  const [username, setUsername] = useState(() => localStorage.getItem("scribble_username") || "");
-  const [nameInput, setNameInput] = useState(username || "");
-  const [hasName, setHasName] = useState(Boolean(username));
+  const [username, setUsername] = useState("");  // CHANGED: Start empty
+  const [nameInput, setNameInput] = useState("");
+  const [hasName, setHasName] = useState(false);  // CHANGED: Start false
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("scribble_dark") === "1");
   const [chat, setChat] = useState([]);
   const [msg, setMsg] = useState("");
@@ -20,6 +20,8 @@ export default function App() {
   const [isDrawer, setIsDrawer] = useState(false);
   const [currentWord, setCurrentWord] = useState("");
   const [currentDrawerName, setCurrentDrawerName] = useState("");
+  const [gameActive, setGameActive] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState(0);
 
   // Canvas state
   const canvasRef = useRef(null);
@@ -31,19 +33,18 @@ export default function App() {
 
   // Connect to backend socket.io
   useEffect(() => {
-    // CRITICAL FIX: Use environment variable OR fallback
     const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
     
     console.log("🔌 Connecting to backend:", BACKEND_URL);
     
     const s = io(BACKEND_URL, { 
-      transports: ["websocket", "polling"], // FIXED: Support both transports
+      transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionAttempts: 10
     });
     
-    socketRef.current = s; // CRITICAL FIX: Set socketRef IMMEDIATELY
+    socketRef.current = s;
 
     s.on("connect", () => {
       console.log("✅ Connected to server");
@@ -60,6 +61,8 @@ export default function App() {
       setIsDrawer(false);
       setCurrentWord("");
       setCurrentDrawerName("");
+      setGameActive(false);
+      setTimeRemaining(0);
     });
 
     s.on("connect_error", (error) => {
@@ -84,6 +87,9 @@ export default function App() {
 
     s.on("gameState", (payload) => {
       console.log("🎮 Received game state:", payload);
+      setGameActive(payload.gameActive);
+      setTimeRemaining(payload.timeRemaining || 0);
+      
       if (payload.currentDrawer) {
         setCurrentDrawerName(payload.currentDrawer);
         const amIDrawer = payload.currentDrawer === username;
@@ -102,7 +108,6 @@ export default function App() {
     });
 
     s.on("remoteStroke", (stroke) => {
-      console.log("🖊️  Received remote stroke");
       drawStrokeOnCanvas(stroke);
     });
 
@@ -115,9 +120,9 @@ export default function App() {
       console.log("🔌 Disconnecting socket...");
       s.disconnect();
     };
-  }, []); // CRITICAL FIX: Empty dependency array - only connect once
+  }, []);
 
-  // CRITICAL FIX: Separate effect to handle username changes
+  // Separate effect for username changes
   useEffect(() => {
     const s = socketRef.current;
     if (s && s.connected && hasName && username) {
@@ -126,7 +131,7 @@ export default function App() {
     }
   }, [hasName, username]);
 
-  // Canvas setup & high-DPI handling
+  // Canvas setup
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -157,7 +162,7 @@ export default function App() {
     return () => window.removeEventListener("resize", resizeCanvas);
   }, []);
 
-  // Auto-scroll chat to bottom
+  // Auto-scroll chat
   const chatBoxRef = useRef(null);
   useEffect(() => {
     if (chatBoxRef.current) {
@@ -192,7 +197,6 @@ export default function App() {
     ctx.restore();
   };
 
-  // Local clear
   const clearCanvasLocal = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -200,18 +204,12 @@ export default function App() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  // Send stroke to server
   const sendStrokeToServer = (stroke) => {
     const s = socketRef.current;
-    if (!s || !s.connected) {
-      console.warn("⚠️  Cannot send stroke - not connected");
-      return;
-    }
-    console.log("📤 Sending stroke to server");
+    if (!s || !s.connected) return;
     s.emit("stroke", stroke);
   };
 
-  // Pointer helpers
   const toCanvasPoint = (clientX, clientY) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -222,12 +220,9 @@ export default function App() {
     };
   };
 
-  // Pointer event handlers
+  // Pointer handlers
   const handlePointerDown = (e) => {
-    if (!isDrawer) {
-      console.log("⚠️  Not drawer - cannot draw");
-      return;
-    }
+    if (!isDrawer) return;
     
     e.preventDefault();
     let clientX, clientY;
@@ -282,7 +277,28 @@ export default function App() {
     lastPointRef.current = null;
   };
 
-  // Chat / guess sending
+  // Game controls
+  const startGame = () => {
+    const s = socketRef.current;
+    if (!s || !s.connected) {
+      alert("Not connected to server!");
+      return;
+    }
+    console.log("📤 Sending start game command");
+    s.emit("startGame");
+  };
+
+  const stopGame = () => {
+    const s = socketRef.current;
+    if (!s || !s.connected) {
+      alert("Not connected to server!");
+      return;
+    }
+    console.log("📤 Sending stop game command");
+    s.emit("stopGame");
+  };
+
+  // Chat
   const sendChat = (e) => {
     e?.preventDefault();
     if (!msg.trim()) return;
@@ -292,11 +308,9 @@ export default function App() {
     }
     const s = socketRef.current;
     if (!s || !s.connected) {
-      console.warn("⚠️  Cannot send message - not connected");
       alert("Not connected to server!");
       return;
     }
-    console.log("📤 Sending guess:", msg);
     s.emit("guess", { from: username, text: msg });
     setMsg("");
   };
@@ -318,9 +332,8 @@ export default function App() {
     }
     console.log("Setting username:", name);
     setUsername(name);
-    localStorage.setItem("scribble_username", name);
+    localStorage.setItem("scribble_username", name);  // Save for convenience
     setHasName(true);
-    // The useEffect will handle sending the join event
   };
 
   const handleNameKeyPress = (e) => {
@@ -332,19 +345,13 @@ export default function App() {
 
   // Clear board
   const clearBoard = () => {
-    if (!isDrawer) {
-      console.warn("⚠️  Not drawer - cannot clear");
-      return;
-    }
+    if (!isDrawer) return;
     const s = socketRef.current;
     clearCanvasLocal();
-    if (s && s.connected) {
-      console.log("📤 Sending clear command");
-      s.emit("clear");
-    }
+    if (s && s.connected) s.emit("clear");
   };
 
-  // Toggle dark mode
+  // Dark mode
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add("dark");
@@ -354,6 +361,13 @@ export default function App() {
       localStorage.setItem("scribble_dark", "0");
     }
   }, [darkMode]);
+
+  // Format time
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const topScorers = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 4);
 
@@ -381,6 +395,55 @@ export default function App() {
         }}>
           {connected ? "🟢 Connected" : "🔴 Disconnected"}
         </div>
+
+        {/* Game Controls */}
+        {hasName && connected && (
+          <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>
+            <button 
+              className="button" 
+              onClick={startGame}
+              disabled={gameActive}
+              style={{ 
+                flex: 1,
+                backgroundColor: gameActive ? "#9ca3af" : "#10b981",
+                color: "#ffffff",
+                fontWeight: 600
+              }}
+            >
+              🎮 Start Game
+            </button>
+            <button 
+              className="button" 
+              onClick={stopGame}
+              disabled={!gameActive}
+              style={{ 
+                flex: 1,
+                backgroundColor: !gameActive ? "#9ca3af" : "#ef4444",
+                color: "#ffffff",
+                fontWeight: 600
+              }}
+            >
+              🛑 Stop Game
+            </button>
+          </div>
+        )}
+
+        {/* Timer Display */}
+        {gameActive && (
+          <div style={{ 
+            marginBottom: 12, 
+            padding: 12, 
+            borderRadius: 6,
+            backgroundColor: timeRemaining < 10 ? "#fef3c7" : "#dbeafe",
+            color: timeRemaining < 10 ? "#92400e" : "#1e40af",
+            fontSize: 24,
+            textAlign: "center",
+            fontWeight: 700,
+            fontFamily: "monospace"
+          }}>
+            ⏱️ {formatTime(timeRemaining)}
+          </div>
+        )}
 
         {/* Current Drawer Info */}
         {currentDrawerName && (
@@ -456,8 +519,7 @@ export default function App() {
               <button className="button" onClick={confirmName}>
                 Set
               </button>
-            </div>
-          )}
+            </div>)}
         </div>
       </div>
 
