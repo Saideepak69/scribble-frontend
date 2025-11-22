@@ -7,9 +7,9 @@ export default function App() {
 
   // UI / game state
   const [connected, setConnected] = useState(false);
-  const [username, setUsername] = useState("");  // CHANGED: Start empty
+  const [username, setUsername] = useState("");
   const [nameInput, setNameInput] = useState("");
-  const [hasName, setHasName] = useState(false);  // CHANGED: Start false
+  const [hasName, setHasName] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("scribble_dark") === "1");
   const [chat, setChat] = useState([]);
   const [msg, setMsg] = useState("");
@@ -22,6 +22,10 @@ export default function App() {
   const [currentDrawerName, setCurrentDrawerName] = useState("");
   const [gameActive, setGameActive] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(0);
+  const [sessionTimeRemaining, setSessionTimeRemaining] = useState(0);
+  const [countdown, setCountdown] = useState(0);
+  const [showResults, setShowResults] = useState(false);
+  const [finalResults, setFinalResults] = useState(null);
 
   // Canvas state
   const canvasRef = useRef(null);
@@ -31,7 +35,7 @@ export default function App() {
   const [color, setColor] = useState("#000000");
   const [size, setSize] = useState(6);
 
-  // Connect to backend socket.io
+  // Connect to backend
   useEffect(() => {
     const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
     
@@ -50,7 +54,6 @@ export default function App() {
       console.log("✅ Connected to server");
       setConnected(true);
       if (hasName && username) {
-        console.log("📤 Sending join event for:", username);
         s.emit("join", username);
       }
     });
@@ -63,6 +66,8 @@ export default function App() {
       setCurrentDrawerName("");
       setGameActive(false);
       setTimeRemaining(0);
+      setSessionTimeRemaining(0);
+      setCountdown(0);
     });
 
     s.on("connect_error", (error) => {
@@ -71,30 +76,33 @@ export default function App() {
     });
 
     s.on("chatMessage", (payload) => {
-      console.log("💬 Received chat message:", payload);
       setChat((c) => [...c, { from: payload.from, text: payload.text }]);
     });
 
     s.on("scoreUpdate", (payload) => {
-      console.log("🏆 Received score update:", payload);
       if (payload && payload.scores) setScores(payload.scores);
     });
 
     s.on("userList", (payload) => {
-      console.log("👥 Received user list:", payload);
       if (Array.isArray(payload)) setUsers(payload);
     });
 
+    s.on("countdown", (payload) => {
+      setCountdown(payload.seconds);
+      if (payload.seconds === 0) {
+        setCountdown(0);
+      }
+    });
+
     s.on("gameState", (payload) => {
-      console.log("🎮 Received game state:", payload);
       setGameActive(payload.gameActive);
       setTimeRemaining(payload.timeRemaining || 0);
+      setSessionTimeRemaining(payload.sessionTimeRemaining || 0);
       
       if (payload.currentDrawer) {
         setCurrentDrawerName(payload.currentDrawer);
         const amIDrawer = payload.currentDrawer === username;
         setIsDrawer(amIDrawer);
-        console.log("   Am I drawer?", amIDrawer);
       } else {
         setCurrentDrawerName("");
         setIsDrawer(false);
@@ -102,7 +110,6 @@ export default function App() {
     });
 
     s.on("yourWord", (payload) => {
-      console.log("🎨 Received word to draw:", payload.word);
       setCurrentWord(payload.word);
       setIsDrawer(true);
     });
@@ -112,21 +119,27 @@ export default function App() {
     });
 
     s.on("clearBoard", () => {
-      console.log("🗑️  Received clear board command");
       clearCanvasLocal();
     });
 
+    s.on("sessionEnded", (payload) => {
+      console.log("🏆 Session ended:", payload);
+      setShowResults(true);
+      setFinalResults(payload);
+      setGameActive(false);
+      setIsDrawer(false);
+      setCurrentWord("");
+      setCurrentDrawerName("");
+    });
+
     return () => {
-      console.log("🔌 Disconnecting socket...");
       s.disconnect();
     };
   }, []);
 
-  // Separate effect for username changes
   useEffect(() => {
     const s = socketRef.current;
     if (s && s.connected && hasName && username) {
-      console.log("📤 Sending join event for:", username);
       s.emit("join", username);
     }
   }, [hasName, username]);
@@ -170,7 +183,6 @@ export default function App() {
     }
   }, [chat]);
 
-  // Draw helper
   const drawStrokeOnCanvas = (stroke) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -220,7 +232,6 @@ export default function App() {
     };
   };
 
-  // Pointer handlers
   const handlePointerDown = (e) => {
     if (!isDrawer) return;
     
@@ -277,25 +288,20 @@ export default function App() {
     lastPointRef.current = null;
   };
 
-  // Game controls
-  const startGame = () => {
-    const s = socketRef.current;
-    if (!s || !s.connected) {
-      alert("Not connected to server!");
-      return;
+  // Leave game
+  const leaveGame = () => {
+    if (window.confirm("Are you sure you want to leave the game?")) {
+      const s = socketRef.current;
+      if (s && s.connected) {
+        s.emit("leaveGame");
+      }
+      // Reset state
+      setHasName(false);
+      setUsername("");
+      setNameInput("");
+      setShowResults(false);
+      setFinalResults(null);
     }
-    console.log("📤 Sending start game command");
-    s.emit("startGame");
-  };
-
-  const stopGame = () => {
-    const s = socketRef.current;
-    if (!s || !s.connected) {
-      alert("Not connected to server!");
-      return;
-    }
-    console.log("📤 Sending stop game command");
-    s.emit("stopGame");
   };
 
   // Chat
@@ -330,10 +336,11 @@ export default function App() {
       alert("Please enter a username");
       return;
     }
-    console.log("Setting username:", name);
     setUsername(name);
-    localStorage.setItem("scribble_username", name);  // Save for convenience
+    localStorage.setItem("scribble_username", name);
     setHasName(true);
+    setShowResults(false);
+    setFinalResults(null);
   };
 
   const handleNameKeyPress = (e) => {
@@ -371,12 +378,93 @@ export default function App() {
 
   const topScorers = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 4);
 
+  // Results Modal
+  if (showResults && finalResults) {
+    return (
+      <div style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: "rgba(0,0,0,0.8)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000
+      }}>
+        <div style={{
+          backgroundColor: darkMode ? "#1f2937" : "#ffffff",
+          color: darkMode ? "#f9fafb" : "#111827",
+          padding: "40px",
+          borderRadius: "16px",
+          maxWidth: "500px",
+          width: "90%",
+          textAlign: "center"
+        }}>
+          <h1 style={{ fontSize: "36px", marginBottom: "20px" }}>🏆 Game Over!</h1>
+          
+          {finalResults.winner && (
+            <>
+              <h2 style={{ fontSize: "28px", marginBottom: "30px", color: "#10b981" }}>
+                Winner: {finalResults.winner}
+              </h2>
+              
+              <div style={{ marginBottom: "30px" }}>
+                <h3 style={{ fontSize: "20px", marginBottom: "15px" }}>Final Leaderboard:</h3>
+                {finalResults.leaderboard.map(([name, score], index) => {
+                  const medals = ["🥇", "🥈", "🥉"];
+                  return (
+                    <div key={name} style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "10px 20px",
+                      marginBottom: "8px",
+                      backgroundColor: darkMode ? "#374151" : "#f3f4f6",
+                      borderRadius: "8px",
+                      fontSize: "18px"
+                    }}>
+                      <span>{medals[index] || `${index + 1}.`} {name}</span>
+                      <span style={{ fontWeight: 700 }}>{score} points</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          
+          <button 
+            onClick={() => {
+              setShowResults(false);
+              setFinalResults(null);
+              setHasName(false);
+              setUsername("");
+              setNameInput("");
+            }}
+            style={{
+              padding: "12px 30px",
+              fontSize: "18px",
+              backgroundColor: "#3b82f6",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "8px",
+              cursor: "pointer",
+              fontWeight: 600
+            }}
+          >
+            Play Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container">
       <div className="left-panel">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
           <div style={{ fontWeight: 700 }}>You:</div>
-          <div style={{ flex: 1 }}>{hasName ? username : "Not set"}</div>
+          <div style={{flex: 1 }}>{hasName ? username : "Not set"}</div>
           <button className="button" onClick={() => setDarkMode((s) => !s)}>
             {darkMode ? "☀️" : "🌙"}
           </button>
@@ -396,53 +484,38 @@ export default function App() {
           {connected ? "🟢 Connected" : "🔴 Disconnected"}
         </div>
 
-        {/* Game Controls */}
-        {hasName && connected && (
-          <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>
-            <button 
-              className="button" 
-              onClick={startGame}
-              disabled={gameActive}
-              style={{ 
-                flex: 1,
-                backgroundColor: gameActive ? "#9ca3af" : "#10b981",
-                color: "#ffffff",
-                fontWeight: 600
-              }}
-            >
-              🎮 Start Game
-            </button>
-            <button 
-              className="button" 
-              onClick={stopGame}
-              disabled={!gameActive}
-              style={{ 
-                flex: 1,
-                backgroundColor: !gameActive ? "#9ca3af" : "#ef4444",
-                color: "#ffffff",
-                fontWeight: 600
-              }}
-            >
-              🛑 Stop Game
-            </button>
-          </div>
-        )}
-
-        {/* Timer Display */}
-        {gameActive && (
+        {/* Countdown Display */}
+        {countdown > 0 && (
           <div style={{ 
             marginBottom: 12, 
-            padding: 12, 
-            borderRadius: 6,
-            backgroundColor: timeRemaining < 10 ? "#fef3c7" : "#dbeafe",
-            color: timeRemaining < 10 ? "#92400e" : "#1e40af",
-            fontSize: 24,
+            padding: 16, 
+            borderRadius: 8,
+            backgroundColor: "#fef3c7",
+            color: "#92400e",
+            fontSize: 20,
             textAlign: "center",
             fontWeight: 700,
             fontFamily: "monospace"
           }}>
-            ⏱️ {formatTime(timeRemaining)}
+            🎮 Starting in {countdown}s...
           </div>
+        )}
+
+        {/* Leave Button */}
+        {hasName && (
+          <button 
+            className="button" 
+            onClick={leaveGame}
+            style={{
+              width: "100%",
+              marginBottom: 12,
+              backgroundColor: "#ef4444",
+              color: "#ffffff",
+              fontWeight: 600
+            }}
+          >
+            🚪 Leave Game
+          </button>
         )}
 
         {/* Current Drawer Info */}
@@ -519,11 +592,64 @@ export default function App() {
               <button className="button" onClick={confirmName}>
                 Set
               </button>
-            </div>)}
+            </div>
+          )}
         </div>
       </div>
 
       <div className="right-panel">
+        {/* Timer Bar at Top */}
+        {gameActive && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "12px 20px",
+            backgroundColor: darkMode ? "#1f2937" : "#ffffff",
+            borderBottom: `2px solid ${darkMode ? "#374151" : "#e5e7eb"}`
+          }}>
+            {/* Round Timer */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: darkMode ? "#d1d5db" : "#6b7280" }}>
+                Round Time:
+              </div>
+              <div style={{
+                padding: "8px 16px",
+                borderRadius: 8,
+                backgroundColor: timeRemaining < 30 ? "#fef3c7" : "#dbeafe",
+                color: timeRemaining < 30 ? "#92400e" : "#1e40af",
+                fontSize: 20,
+                fontWeight: 700,
+                fontFamily: "monospace",
+                minWidth: 80,
+                textAlign: "center"
+              }}>
+                ⏱️ {formatTime(timeRemaining)}
+              </div>
+            </div>
+
+            {/* Session Timer */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: darkMode ? "#d1d5db" : "#6b7280" }}>
+                Session Time:
+              </div>
+              <div style={{
+                padding: "8px 16px",
+                borderRadius: 8,
+                backgroundColor: sessionTimeRemaining < 120 ? "#fee2e2" : "#d1fae5",
+                color: sessionTimeRemaining < 120 ? "#991b1b" : "#065f46",
+                fontSize: 20,
+                fontWeight: 700,
+                fontFamily: "monospace",
+                minWidth: 80,
+                textAlign: "center"
+              }}>
+                🎮 {formatTime(sessionTimeRemaining)}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="toolbar">
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button 
