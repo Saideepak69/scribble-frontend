@@ -514,7 +514,7 @@ export default function App() {
               fontWeight: 600
             }}
           >
-            🚪 Leave Game
+              Leave Game
           </button>
         )}
 
