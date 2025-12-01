@@ -123,7 +123,7 @@ export default function App() {
     });
 
     s.on("sessionEnded", (payload) => {
-      console.log("🏆 Session ended:", payload);
+      console.log("Session ended:", payload);
       setShowResults(true);
       setFinalResults(payload);
       setGameActive(false);
@@ -402,7 +402,7 @@ export default function App() {
           width: "90%",
           textAlign: "center"
         }}>
-          <h1 style={{ fontSize: "36px", marginBottom: "20px" }}>🏆 Game Over!</h1>
+          <h1 style={{ fontSize: "36px", marginBottom: "20px" }}> Game Over!</h1>
           
           {finalResults.winner && (
             <>
@@ -514,7 +514,7 @@ export default function App() {
               fontWeight: 600
             }}
           >
-              Leave Game
+            🚪 Leave Game
           </button>
         )}
 
@@ -530,7 +530,7 @@ export default function App() {
             textAlign: "center",
             fontWeight: 600
           }}>
-            {isDrawer ? `🎨 You're drawing: ${currentWord}` : `👀 ${currentDrawerName} is drawing`}
+            {isDrawer ? ` You're drawing: ${currentWord}` : ` ${currentDrawerName} is drawing`}
           </div>
         )}
 
