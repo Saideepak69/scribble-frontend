@@ -497,7 +497,7 @@ export default function App() {
             fontWeight: 700,
             fontFamily: "monospace"
           }}>
-            🎮 Starting in {countdown}s...
+              Starting in {countdown}s...
           </div>
         )}
 
@@ -514,7 +514,7 @@ export default function App() {
               fontWeight: 600
             }}
           >
-            🚪 Leave Game
+              Leave Game
           </button>
         )}
 
