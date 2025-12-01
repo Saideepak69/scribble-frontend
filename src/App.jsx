@@ -4,6 +4,9 @@ import "./index.css";
 
 export default function App() {
   const socketRef = useRef(null);
+  
+  // --- CRITICAL FIX: Reference to keep track of username inside socket listeners ---
+  const usernameRef = useRef(""); 
 
   // UI / game state
   const [connected, setConnected] = useState(false);
@@ -35,6 +38,11 @@ export default function App() {
   const [color, setColor] = useState("#000000");
   const [size, setSize] = useState(6);
 
+  // --- CRITICAL FIX: Sync ref with state ---
+  useEffect(() => {
+    usernameRef.current = username;
+  }, [username]);
+
   // Connect to backend
   useEffect(() => {
     const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
@@ -53,8 +61,10 @@ export default function App() {
     s.on("connect", () => {
       console.log("✅ Connected to server");
       setConnected(true);
-      if (hasName && username) {
-        s.emit("join", username);
+      
+      // FIX: Use ref here to ensure we rejoin if we have a name during a reconnect
+      if (usernameRef.current) {
+        s.emit("join", usernameRef.current);
       }
     });
 
@@ -101,7 +111,11 @@ export default function App() {
       
       if (payload.currentDrawer) {
         setCurrentDrawerName(payload.currentDrawer);
-        const amIDrawer = payload.currentDrawer === username;
+        
+        // --- CRITICAL FIX: Compare against ref, not stale state ---
+        // This ensures that even if this listener was created when username was "",
+        // it checks the current value in the ref.
+        const amIDrawer = payload.currentDrawer === usernameRef.current;
         setIsDrawer(amIDrawer);
       } else {
         setCurrentDrawerName("");
@@ -137,6 +151,7 @@ export default function App() {
     };
   }, []);
 
+  // Handle Initial Join when name is set
   useEffect(() => {
     const s = socketRef.current;
     if (s && s.connected && hasName && username) {
@@ -514,7 +529,7 @@ export default function App() {
               fontWeight: 600
             }}
           >
-              Leave Game
+            Leave Game
           </button>
         )}
 
